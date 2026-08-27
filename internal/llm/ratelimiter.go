@@ -64,7 +64,7 @@ func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
 		limit := rate.Every(time.Minute / time.Duration(cfg.RequestsPerMinute))
 		rpmLimiter = rate.NewLimiter(limit, 1)
 	} else {
-		rpmLimiter = rate.NewLimiter(rate.Inf, 0)
+		rpmLimiter = rate.NewLimiter(rate.Inf, 1)
 	}
 
 	var tpmLimiter *rate.Limiter
@@ -72,7 +72,7 @@ func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
 		limit := rate.Limit(float64(cfg.TokensPerMinute) / 60.0)
 		tpmLimiter = rate.NewLimiter(limit, cfg.TokensPerMinute)
 	} else {
-		tpmLimiter = rate.NewLimiter(rate.Inf, 0)
+		tpmLimiter = rate.NewLimiter(rate.Inf, 1000000000)
 	}
 
 	state := loadPersistedState()
@@ -107,11 +107,13 @@ func (rl *RateLimiter) Wait(ctx context.Context, estimatedTokens int) error {
 	savePersistedState(PersistedState{DailyCount: rl.dailyCount, DailyReset: rl.dailyReset})
 	rl.mu.Unlock()
 
-	if err := rl.rpm.Wait(ctx); err != nil {
-		return err
+	if rl.rpm.Limit() != rate.Inf {
+		if err := rl.rpm.Wait(ctx); err != nil {
+			return err
+		}
 	}
 
-	if estimatedTokens > 0 {
+	if estimatedTokens > 0 && rl.tpm.Limit() != rate.Inf {
 		if err := rl.tpm.WaitN(ctx, estimatedTokens); err != nil {
 			return err
 		}

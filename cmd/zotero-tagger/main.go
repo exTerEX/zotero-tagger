@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -41,8 +40,11 @@ var tagCmd = &cobra.Command{
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
 
-		runner := pipeline.NewRunner(cfg, logger)
-		return runner.Run(context.Background(), opts)
+		runner, err := pipeline.NewRunner(cmd.Context(), cfg, logger)
+		if err != nil {
+			return fmt.Errorf("failed to initialize pipeline runner: %w", err)
+		}
+		return runner.Run(cmd.Context(), opts)
 	},
 }
 

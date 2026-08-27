@@ -30,7 +30,6 @@ type RateLimitConfig struct {
 type LLMConfig struct {
 	APIKey         string          `mapstructure:"api_key"`
 	ModelName      string          `mapstructure:"model_name"`
-	BaseURL        string          `mapstructure:"base_url"`
 	Temperature    float64         `mapstructure:"temperature"`
 	MaxInputTokens int             `mapstructure:"max_input_tokens"`
 	RateLimits     RateLimitConfig `mapstructure:"rate_limits"`
@@ -90,7 +89,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	if envKey := os.Getenv("LLM_API_KEY"); envKey != "" {
+	if envKey := os.Getenv("GEMINI_API_KEY"); envKey != "" {
 		cfg.LLM.APIKey = envKey
 	}
 	if envUserID := os.Getenv("ZOTERO_USER_ID"); envUserID != "" {

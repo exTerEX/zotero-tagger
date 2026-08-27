@@ -10,9 +10,8 @@ A comprehensive guide for configuring, deploying, and extending `zotero-tagger`.
 2. [Configuration Reference (`config.toml`)](#2-configuration-reference-configtoml)
 3. [Environment Variables (`.env`)](#3-environment-variables-env)
 4. [Zotero API Setup](#4-zotero-api-setup)
-5. [OpenAI-Compatible LLM Integration](#5-openai-compatible-llm-integration)
-   - [Standard OpenAI Setup](#standard-openai-setup)
-   - [Local & Self-Hosted LLMs (Ollama, vLLM, LiteLLM)](#local--self-hosted-llms-ollama-vllm-litellm)
+5. [Google GenAI LLM Integration](#5-google-genai-llm-integration)
+   - [Gemini API Setup](#gemini-api-setup)
    - [Model Requirements & Recommendations](#model-requirements--recommendations)
 6. [Taxonomy & Tagging System](#6-taxonomy--tagging-system)
    - [Namespace Standards (`org:`, `group:`, `topic:`)](#namespace-standards-org-group-topic)
@@ -37,7 +36,7 @@ sequenceDiagram
     participant CLI as Tagger CLI / Runner
     participant Zotero as Zotero API
     participant Engine as Text & Heuristics Engine
-    participant LLM as OpenAI-Compatible LLM
+    participant LLM as Google Gemini LLM
 
     CLI->>Zotero: Fetch untagged items (exclude sentinel tag)
     Zotero-->>CLI: Return items list (paginated)
@@ -69,7 +68,7 @@ sequenceDiagram
 2. **Text Acquisition**: Attempts to download and extract full text from the highest-priority PDF attachment using `pdftotext`. If no PDF exists or extraction produces empty text, falls back to the Zotero abstract field.
 3. **Text Reduction & Token Optimization**: Strips bibliographic citations, references, and appendices, prioritizing the most informative scientific sections (Abstract &rarr; Conclusion &rarr; Introduction).
 4. **Local Regex Entity Pre-Extraction**: Scans text for Latin binomials, genus abbreviations, and clade suffixes. Detected entities are supplied as hints to the model without consuming significant context.
-5. **OpenAI-Compatible LLM Prompting**: Prompts the LLM with structured taxonomy instructions and schema constraints. Supports optional disk caching for zero-token re-runs.
+5. **Google GenAI LLM Prompting**: Prompts the Gemini model with structured taxonomy instructions and schema constraints. Supports optional disk caching for zero-token re-runs.
 6. **Schema Validation & Topic Filtering**: Validates JSON response structure, normalizes namespace formatting, and discards any topic not present in the configured controlled vocabulary.
 7. **Optimistic Version Lock & Sentinel Sync**: Appends formatted tags plus the sentinel tag (`_ai-tagged`) to the item in Zotero using HTTP optimistic locking (`If-Unmodified-Since-Version`).
 
@@ -82,10 +81,7 @@ The application configuration is managed via TOML. By default, the application l
 ```toml
 [llm]
 # Model identifier to specify in the API request
-model_name = "gpt-4o-mini"
-
-# Base URL of the OpenAI-compatible API endpoint
-base_url = "https://api.openai.com/v1"
+model_name = "gemini-3.5-flash-lite"
 
 # Sampling temperature (0.0 recommended for deterministic, structured output)
 temperature = 0.0
@@ -95,8 +91,8 @@ max_input_tokens = 10000
 
 [llm.rate_limits]
 # Rate limiting controls
-requests_per_minute = 60
-tokens_per_minute = 50000
+requests_per_minute = 1000
+tokens_per_minute = 1000000
 requests_per_day = 10000
 
 [llm.retries]
@@ -242,14 +238,14 @@ ZOTERO_USER_ID=12345678
 ZOTERO_API_KEY=your_zotero_api_key_here
 
 # ------------------------------------------------------------------------------
-# LLM API CREDENTIALS
+# GEMINI API CREDENTIALS
 # ------------------------------------------------------------------------------
-# API Key for your OpenAI-compatible inference provider
-LLM_API_KEY=your_openai_or_compatible_api_key
+# API Key for Google Gemini (retrieve from https://aistudio.google.com/app/apikey)
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 > [!TIP]
-> You can also supply these credentials via standard OS environment variables (e.g. `export ZOTERO_API_KEY="..."`). The application will look for `.env` files automatically in the working directory or parent directories.
+> You can also supply these credentials via standard OS environment variables (e.g. `export GEMINI_API_KEY="..."`). The application will look for `.env` files automatically in the working directory or parent directories.
 
 ---
 
@@ -279,67 +275,25 @@ LLM_API_KEY=your_openai_or_compatible_api_key
 
 ---
 
-## 5. OpenAI-Compatible LLM Integration
+## 5. Google GenAI LLM Integration
 
-`zotero-tagger` uses the official OpenAI Go SDK (`github.com/openai/openai-go/v3`), making it fully compatible with any endpoint implementing the OpenAI Chat Completions API specification (`/v1/chat/completions`).
+`zotero-tagger` uses the official Google GenAI Go SDK (`google.golang.org/genai`), communicating with Google's Gemini models for structured categorization.
 
-### Standard OpenAI Setup
+### Gemini API Setup
 
 In `config/config.toml`:
 
 ```toml
 [llm]
-model_name = "gpt-4o-mini"
-base_url = "https://api.openai.com/v1"
+model_name = "gemini-3.5-flash-lite"
 temperature = 0.0
+max_input_tokens = 10000
 ```
 
 In `.env`:
 
 ```env
-LLM_API_KEY=sk-proj-...
-```
-
----
-
-### Local & Self-Hosted LLMs (Ollama, vLLM, LiteLLM)
-
-You can run entirely offline or self-hosted models without sending data to external cloud providers.
-
-#### Using Ollama
-
-1. Start Ollama and pull your desired model (e.g., Qwen 2.5 or Llama 3.1):
-   ```bash
-   ollama run qwen2.5:7b
-   ```
-2. Configure `config/config.toml`:
-   ```toml
-   [llm]
-   model_name = "qwen2.5:7b"
-   base_url = "http://localhost:11434/v1"
-   temperature = 0.0
-   ```
-3. Set a placeholder key in `.env` (Ollama ignores the key value, but the client expects a non-empty string):
-   ```env
-   LLM_API_KEY=ollama-local
-   ```
-
-#### Using vLLM
-
-```toml
-[llm]
-model_name = "Qwen/Qwen2.5-7B-Instruct"
-base_url = "http://localhost:8000/v1"
-temperature = 0.0
-```
-
-#### Using OpenRouter or Multi-Model Gateways (LiteLLM)
-
-```toml
-[llm]
-model_name = "anthropic/claude-3.5-sonnet" # or any model supported by your gateway
-base_url = "https://openrouter.ai/api/v1"  # or http://localhost:4000/v1 for LiteLLM proxy
-temperature = 0.0
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ---
@@ -347,9 +301,10 @@ temperature = 0.0
 ### Model Requirements & Recommendations
 
 For optimal classification performance:
-- **Instruction-tuned / Chat models**: Use models fine-tuned for instruction following and structured JSON generation (e.g., `gpt-4o-mini`, `gpt-4o`, `Qwen/Qwen2.5-7B-Instruct`, `Llama-3.1-8B-Instruct`).
+- **Default Recommendation**: `gemini-3.5-flash-lite` provides ultra-low latency, generous free-tier rate limits, and structured JSON output adherence.
+- **Alternative Models**: `gemini-2.5-flash` or `gemini-2.5-pro` can be specified in `config/config.toml` if deeper scientific reasoning is required.
 - **Temperature**: Keep `temperature = 0.0` to ensure strict, repeatable adherence to taxonomy formatting rules.
-- **Context Length**: A context window of at least 8,000&ndash;16,000 tokens accommodates optimized full-text papers and candidate entity lists.
+- **Context Length**: Gemini models provide 1M+ token context windows, allowing seamless processing of long academic articles and comprehensive taxonomy rules.
 
 ---
 

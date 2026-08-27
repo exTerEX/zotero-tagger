@@ -6,13 +6,12 @@ import (
 	"strings"
 
 	"github.com/andreassag/zotero-tagger/internal/config"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	"github.com/rs/zerolog"
+	"google.golang.org/genai"
 )
 
 type Client struct {
-	client      *openai.Client
+	client      *genai.Client
 	model       string
 	temperature float64
 	rateLimiter *RateLimiter
@@ -21,25 +20,26 @@ type Client struct {
 	cache       *DiskCache
 }
 
-func NewClient(cfg config.LLMConfig, logger zerolog.Logger) *Client {
-	opts := []option.RequestOption{
-		option.WithAPIKey(cfg.APIKey),
-	}
-	if cfg.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+func NewClient(ctx context.Context, cfg config.LLMConfig, logger zerolog.Logger) (*Client, error) {
+	clientConfig := &genai.ClientConfig{
+		APIKey:  cfg.APIKey,
+		Backend: genai.BackendGeminiAPI,
 	}
 
-	client := openai.NewClient(opts...)
+	client, err := genai.NewClient(ctx, clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Google GenAI client: %w", err)
+	}
 
 	return &Client{
-		client:      &client,
+		client:      client,
 		model:       cfg.ModelName,
 		temperature: cfg.Temperature,
 		rateLimiter: NewRateLimiter(cfg.RateLimits),
 		retryConfig: cfg.Retries,
 		logger:      logger,
 		cache:       NewDiskCache(),
-	}
+	}, nil
 }
 
 func (c *Client) CallSync(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
@@ -49,25 +49,42 @@ func (c *Client) CallSync(ctx context.Context, systemPrompt, userPrompt string) 
 		return "", fmt.Errorf("rate limiter wait failed: %w", err)
 	}
 
-	params := openai.ChatCompletionNewParams{
-		Model: openai.ChatModel(c.model),
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(systemPrompt),
-			openai.UserMessage(userPrompt),
+	temp := float32(c.temperature)
+	genConfig := &genai.GenerateContentConfig{
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{
+				{Text: systemPrompt},
+			},
 		},
-		Temperature: openai.Float(c.temperature),
+		Temperature:      &temp,
+		ResponseMIMEType: "application/json",
 	}
 
-	resp, err := c.client.Chat.Completions.New(ctx, params)
+	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userPrompt), genConfig)
 	if err != nil {
-		return "", fmt.Errorf("chat completion request failed: %w", err)
+		return "", fmt.Errorf("gemini generate content failed: %w", err)
 	}
 
-	if len(resp.Choices) == 0 {
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
 		return "", fmt.Errorf("no response choices returned from LLM")
 	}
 
-	return resp.Choices[0].Message.Content, nil
+	result := resp.Text()
+	if result == "" {
+		var sb strings.Builder
+		for _, part := range resp.Candidates[0].Content.Parts {
+			if part.Text != "" {
+				sb.WriteString(part.Text)
+			}
+		}
+		result = sb.String()
+	}
+
+	if result == "" {
+		return "", fmt.Errorf("empty text response returned from LLM")
+	}
+
+	return result, nil
 }
 
 func (c *Client) CallSyncWithCache(ctx context.Context, systemPrompt, userPrompt string, useCache bool) (string, error) {

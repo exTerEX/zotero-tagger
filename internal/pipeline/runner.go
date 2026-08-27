@@ -40,14 +40,19 @@ type Runner struct {
 	logger       zerolog.Logger
 }
 
-func NewRunner(cfg *config.Config, logger zerolog.Logger) *Runner {
+func NewRunner(ctx context.Context, cfg *config.Config, logger zerolog.Logger) (*Runner, error) {
+	llmClient, err := llm.NewClient(ctx, cfg.LLM, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize LLM client: %w", err)
+	}
+
 	return &Runner{
 		cfg:          cfg,
 		zoteroClient: zotero.NewClient(cfg.Zotero),
-		llmClient:    llm.NewClient(cfg.LLM, logger),
+		llmClient:    llmClient,
 		display:      display.NewOutput(),
 		logger:       logger,
-	}
+	}, nil
 }
 
 func (r *Runner) Run(ctx context.Context, opts Options) error {

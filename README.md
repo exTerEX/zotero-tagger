@@ -1,13 +1,13 @@
 # Zotero AI Tagger
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![OpenAI Compatible](https://img.shields.io/badge/LLM-OpenAI--Compatible-412991?style=flat&logo=openai)](https://platform.openai.com)
+[![Google Gemini](https://img.shields.io/badge/LLM-Google%20Gemini-4285F4?style=flat&logo=google)](https://ai.google.dev)
 [![Docker Ready](https://img.shields.io/badge/Docker-Containerized-2496ED?style=flat&logo=docker)](docker/Dockerfile)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An automated, high-performance CLI tool that categorizes and tags academic literature in **Zotero** libraries using large language models.
+An automated, high-performance CLI tool that categorizes and tags academic literature in **Zotero** libraries using Google Gemini large language models.
 
-By integrating PDF full-text extraction, rule-based text reduction heuristics (70–80% token savings), zero-token local biological entity pre-extraction, and OpenAI-compatible LLM endpoints, `zotero-tagger` delivers standardized, hierarchical, and controlled taxonomy tags back into your Zotero database with full idempotency and concurrency.
+By integrating PDF full-text extraction, rule-based text reduction heuristics (70–80% token savings), zero-token local biological entity pre-extraction, and Google GenAI SDK endpoints (defaulting to `gemini-3.5-flash-lite`), `zotero-tagger` delivers standardized, hierarchical, and controlled taxonomy tags back into your Zotero database with full idempotency and concurrency.
 
 ---
 
@@ -27,7 +27,7 @@ By integrating PDF full-text extraction, rule-based text reduction heuristics (7
   - `org:` &mdash; Standardized lowercase binomial species names (e.g., `org:streptococcus-mutans`). Excludes lab-tool cloning hosts and expression vectors unless they are the primary subject of research.
   - `group:` &mdash; Higher-level taxonomic clades, families, or phenotypic traits (e.g., `group:streptococcaceae`, `group:gram-negative`).
   - `topic:` &mdash; Controlled subject terms validated strictly against a user-defined vocabulary list to prevent taxonomy drift and hallucinated keywords.
-- **Universal OpenAI-Compatible LLM Integration**: Connects to any OpenAI-compatible API endpoint (OpenAI, local Ollama, vLLM, LiteLLM, OpenRouter, or self-hosted inference servers).
+- **Google GenAI Integration**: Uses the official Google GenAI SDK (`google.golang.org/genai`) defaulting to high-speed, cost-effective `gemini-3.5-flash-lite`.
 - **Safety, Concurrency & Idempotency**:
   - Sentinel tagging (`_ai-tagged`) prevents duplicate processing on subsequent runs.
   - `--dry-run` mode provides rich terminal table previews without mutating your Zotero library.
@@ -44,7 +44,7 @@ flowchart LR
     A[Zotero Library] -->|Fetch Unprocessed Items| B[PDF / Abstract Extractor]
     B --> C[Text Preprocessor & Token Reducer]
     C -->|Regex Pre-Extraction| D[Local Species Heuristics]
-    C & D --> E[OpenAI-Compatible LLM API]
+    C & D --> E[Google Gemini LLM API]
     E --> F[JSON Schema & Taxonomy Validator]
     F -->|Controlled Topic Filter| G[Tag Builder]
     G -->|Optimistic Lock Update| A
@@ -87,24 +87,24 @@ Edit `.env` with your API credentials:
 ZOTERO_USER_ID=12345678
 ZOTERO_API_KEY=your_zotero_api_key
 
-# LLM API credentials (OpenAI or any OpenAI-compatible provider)
-LLM_API_KEY=your_llm_api_key
+# Gemini API credentials
+# Obtain your API key from Google AI Studio at https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ### 3. Customize `config/config.toml`
 
-Adjust the configuration file to match your LLM endpoint, model, rate limits, and controlled topics:
+Adjust the configuration file to match your model, rate limits, and controlled topics:
 
 ```toml
 [llm]
-model_name = "gpt-4o-mini"
-base_url = "https://api.openai.com/v1"
+model_name = "gemini-3.5-flash-lite"
 temperature = 0.0
 max_input_tokens = 10000
 
 [llm.rate_limits]
-requests_per_minute = 60
-tokens_per_minute = 50000
+requests_per_minute = 1000
+tokens_per_minute = 1000000
 requests_per_day = 10000
 
 [zotero]
@@ -121,6 +121,20 @@ topics = [
     "microbiome"
 ]
 ```
+
+### 4. Git Hooks Configuration
+
+Enable the repository's automated pre-commit quality checks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The pre-commit hook automatically validates:
+- Code formatting (`gofmt -s`)
+- Static analysis (`go vet`)
+- Linting (`golangci-lint` if installed)
+- Unit test suite (`go test -short`)
 
 ---
 
@@ -230,7 +244,7 @@ docker run --rm \
 
 ## Detailed Documentation
 
-For full architectural specifications, taxonomy schemas, local model configuration (Ollama/vLLM), and troubleshooting guides, see the [Detailed Documentation Guide](docs/README.md).
+For full architectural specifications, taxonomy schemas, model configuration, and troubleshooting guides, see the [Detailed Documentation Guide](docs/README.md).
 
 ---
 
