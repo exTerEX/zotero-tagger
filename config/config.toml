@@ -1,12 +1,11 @@
 [llm]
 model_name = "gemini-3.5-flash-lite"
 temperature = 0.0
-max_input_tokens = 10000
 
 [llm.rate_limits]
-requests_per_minute = 15
-tokens_per_minute = 250000
-requests_per_day = 500
+requests_per_minute = 10
+tokens_per_minute = 200000
+requests_per_day = 400
 
 [llm.retries]
 max_retries = 3
@@ -24,10 +23,6 @@ allowed = [
     "journalArticle", "conferencePaper", "preprint",
     "thesis", "book", "bookSection"
 ]
-
-[processing]
-section_priority = ["abstract", "conclusion", "introduction"]
-intro_paragraphs = 3
 
 [tagging]
 sentinel_tag = "_ai-tagged"

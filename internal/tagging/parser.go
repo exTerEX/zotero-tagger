@@ -30,6 +30,10 @@ func ParseResponse(raw string) (*TagResult, error) {
 }
 
 func FilterControlledTopics(result *TagResult, allowedTopics []string) *TagResult {
+	if result == nil {
+		return nil
+	}
+
 	allowedMap := make(map[string]bool)
 	for _, t := range allowedTopics {
 		allowedMap[strings.ToLower(strings.TrimSpace(t))] = true
@@ -44,6 +48,9 @@ func FilterControlledTopics(result *TagResult, allowedTopics []string) *TagResul
 		}
 	}
 
-	result.TopicTags = validTopics
-	return result
+	return &TagResult{
+		OrgTags:   append([]string(nil), result.OrgTags...),
+		GroupTags: append([]string(nil), result.GroupTags...),
+		TopicTags: validTopics,
+	}
 }

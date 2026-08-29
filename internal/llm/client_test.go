@@ -38,12 +38,8 @@ func newTestClient(serverURL string, client *http.Client) (*Client, error) {
 		model:       "gemini-3.5-flash-lite",
 		temperature: 0.0,
 		rateLimiter: NewRateLimiter(rateCfg),
-		retryConfig: config.RetryConfig{
-			MaxRetries:  1,
-			BackoffBase: 0.01,
-		},
-		logger: zerolog.Nop(),
-		cache:  NewDiskCache(),
+		logger:      zerolog.Nop(),
+		cache:       NewDiskCache(),
 	}, nil
 }
 
@@ -130,4 +126,22 @@ func TestRateLimiter_Unlimited(t *testing.T) {
 
 	err := rl.Wait(context.Background(), 100)
 	assert.NoError(t, err)
+}
+
+func TestHashPDFPrompt(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "test-*.pdf")
+	assert.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	_, err = tmpFile.WriteString("%PDF-1.4 dummy content")
+	assert.NoError(t, err)
+	_ = tmpFile.Close()
+
+	hash1, err := HashPDFPrompt("gemini-3.5-flash-lite", "system", "user", tmpFile.Name())
+	assert.NoError(t, err)
+	assert.NotEmpty(t, hash1)
+
+	hash2, err := HashPDFPrompt("gemini-3.5-flash-lite", "system", "user", tmpFile.Name())
+	assert.NoError(t, err)
+	assert.Equal(t, hash1, hash2)
 }

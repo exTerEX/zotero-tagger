@@ -43,6 +43,24 @@ func HashPrompt(model, systemPrompt, userPrompt string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
+func HashPDFPrompt(model, systemPrompt, userPrompt, pdfPath string) (string, error) {
+	data, err := os.ReadFile(filepath.Clean(pdfPath))
+	if err != nil {
+		return "", err
+	}
+	pdfHash := sha256.Sum256(data)
+
+	hasher := sha256.New()
+	hasher.Write([]byte(model))
+	hasher.Write([]byte("|"))
+	hasher.Write([]byte(systemPrompt))
+	hasher.Write([]byte("|"))
+	hasher.Write([]byte(userPrompt))
+	hasher.Write([]byte("|"))
+	hasher.Write(pdfHash[:])
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
 func (c *DiskCache) Get(promptHash string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

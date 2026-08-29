@@ -15,10 +15,10 @@ A comprehensive guide for configuring, deploying, and extending `zotero-tagger`.
    - [Model Requirements & Recommendations](#model-requirements--recommendations)
 6. [Taxonomy & Tagging System](#6-taxonomy--tagging-system)
    - [Namespace Standards (`org:`, `group:`, `topic:`)](#namespace-standards-org-group-topic)
-   - [Entity Pre-Extraction & Exclusion Rules](#entity-pre-extraction--exclusion-rules)
+   - [Organism Tagging & Exclusion Rules](#organism-tagging--exclusion-rules)
    - [Controlled Vocabularies & Domain Customization](#controlled-vocabularies--domain-customization)
    - [Sentinel Tag & Idempotency](#sentinel-tag--idempotency)
-7. [Token Reduction & Optimization Engine](#7-token-reduction--optimization-engine)
+7. [Multimodal PDF & Document Ingestion](#7-multimodal-pdf--document-ingestion)
 8. [Performance, Rate Limiting & Caching](#8-performance-rate-limiting--caching)
 9. [CLI Command & Flag Reference](#9-cli-command--flag-reference)
 10. [Docker Deployment](#10-docker-deployment)
@@ -35,7 +35,7 @@ sequenceDiagram
     autonumber
     participant CLI as Tagger CLI / Runner
     participant Zotero as Zotero API
-    participant Engine as Text & Heuristics Engine
+    participant Google as Google GenAI Files API
     participant LLM as Google Gemini LLM
 
     CLI->>Zotero: Fetch untagged items (exclude sentinel tag)
@@ -44,13 +44,13 @@ sequenceDiagram
         CLI->>Zotero: Download PDF attachment
         alt PDF Available
             Zotero-->>CLI: Return PDF stream
-            CLI->>Engine: Extract raw text via pdftotext
-        else No PDF / Extraction Failed
-            CLI->>Engine: Fallback to Item Abstract Note
+            CLI->>Google: Upload PDF via Files API
+            Google-->>CLI: Return File Resource (URI)
+            CLI->>LLM: Dispatch multimodal prompt with PDF file part
+            CLI->>Google: Delete uploaded PDF (cleanup)
+        else No PDF Available
+            CLI->>LLM: Fallback to Item Abstract Note as text prompt
         end
-        CLI->>Engine: Apply token reduction (citations, IMRAD, truncation)
-        CLI->>Engine: Execute zero-token local entity pre-extraction
-        CLI->>LLM: Dispatch structured chat completion prompt
         LLM-->>CLI: Return JSON taxonomy payload
         CLI->>CLI: Validate JSON & enforce controlled topics
         alt Not Dry-Run
@@ -65,12 +65,11 @@ sequenceDiagram
 ### Key Stages
 
 1. **Item Discovery**: Queries user or group library for items matching allowed types (`journalArticle`, `conferencePaper`, `preprint`, `thesis`, `book`, etc.) that do not have the sentinel tag (`_ai-tagged`).
-2. **Text Acquisition**: Attempts to download and extract full text from the highest-priority PDF attachment using `pdftotext`. If no PDF exists or extraction produces empty text, falls back to the Zotero abstract field.
-3. **Text Reduction & Token Optimization**: Strips bibliographic citations, references, and appendices, prioritizing the most informative scientific sections (Abstract &rarr; Conclusion &rarr; Introduction).
-4. **Local Regex Entity Pre-Extraction**: Scans text for Latin binomials, genus abbreviations, and clade suffixes. Detected entities are supplied as hints to the model without consuming significant context.
-5. **Google GenAI LLM Prompting**: Prompts the Gemini model with structured taxonomy instructions and schema constraints. Supports optional disk caching for zero-token re-runs.
-6. **Schema Validation & Topic Filtering**: Validates JSON response structure, normalizes namespace formatting, and discards any topic not present in the configured controlled vocabulary.
-7. **Optimistic Version Lock & Sentinel Sync**: Appends formatted tags plus the sentinel tag (`_ai-tagged`) to the item in Zotero using HTTP optimistic locking (`If-Unmodified-Since-Version`).
+2. **Document Acquisition**: Downloads the attached PDF file from Zotero. If no PDF exists, falls back to the Zotero abstract field. Items with neither PDF nor abstract are gracefully skipped.
+3. **Google GenAI File Upload**: Uploads the PDF directly to Google via the Google GenAI Files API (`client.Files.UploadFromPath`) for native multimodal understanding, then guarantees deletion after inference.
+4. **Pure Multimodal LLM Extraction**: Prompts the Gemini model (`gemini-3.5-flash-lite`) with structured taxonomy instructions to identify organisms, clades, and topic tags directly from the full document. Supports optional disk caching for zero-token re-runs.
+5. **Schema Validation & Topic Filtering**: Validates JSON response structure, normalizes namespace formatting, and discards any topic not present in the configured controlled vocabulary.
+6. **Optimistic Version Lock & Sentinel Sync**: Appends formatted tags plus the sentinel tag (`_ai-tagged`) to the item in Zotero using HTTP optimistic locking (`If-Unmodified-Since-Version`).
 
 ---
 
@@ -85,9 +84,6 @@ model_name = "gemini-3.5-flash-lite"
 
 # Sampling temperature (0.0 recommended for deterministic, structured output)
 temperature = 0.0
-
-# Maximum token budget allocated for extracted paper text
-max_input_tokens = 10000
 
 [llm.rate_limits]
 # Rate limiting controls
@@ -120,104 +116,22 @@ allowed = [
     "bookSection"
 ]
 
-[processing]
-# Preferred section priority order for text reduction
-section_priority = ["abstract", "conclusion", "introduction"]
-# Number of introductory paragraphs to retain when constructing prompt text
-intro_paragraphs = 3
-
 [tagging]
 # Tag applied to items once processed to prevent redundant reprocessing
 sentinel_tag = "_ai-tagged"
 
 [tagging.controlled_topics]
 # Authorized topic vocabulary. LLM topic outputs outside this list are discarded.
+# See config/config.toml for the complete list of default microbiology topics.
 topics = [
     "oral microbiology",
     "biofilm",
-    "quorum sensing",
+    "quorum-sensing",
     "antimicrobial resistance",
     "PCR",
     "genomics",
     "metagenomics",
-    "microbiome",
-    "pathogenesis",
-    "virulence factors",
-    "dental caries",
-    "periodontal disease",
-    "endodontics",
-    "taxonomy",
-    "phylogenetics",
-    "clinical microbiology",
-    "antibiotic susceptibility",
-    "whole genome sequencing",
-    "16S rRNA",
-    "MALDI-TOF",
-    "culture methods",
-    "anaerobic microbiology",
-    "polymicrobial infections",
-    "host-microbe interactions",
-    "immunology",
-    "epidemiology",
-    "public health",
-    "food microbiology",
-    "environmental microbiology",
-    "bioinformatics",
-    "machine learning",
-    "proteomics",
-    "metabolomics",
-    "transcriptomics",
-    "qPCR",
-    "single cell rna seq",
-    "comparative genomics",
-    "horizontal gene transfer",
-    "natural transformation",
-    "bacterial persistence",
-    "peptidoglycan",
-    "outer membrane",
-    "bacterial capsule",
-    "pili fimbriae",
-    "plasmids",
-    "membrane vesicles",
-    "gut microbiome",
-    "dysbiosis",
-    "commensalism",
-    "opportunistic infection",
-    "nosocomial infection",
-    "immunocompromised host",
-    "bacteriophage",
-    "archaea",
-    "mycobacteria",
-    "fungal microbiome",
-    "periodontitis",
-    "gingivitis",
-    "salivary glands",
-    "gingival crevicular fluid",
-    "oral mucosa",
-    "periodontal ligament",
-    "alveolar bone",
-    "dental pulp",
-    "dental plaque",
-    "enamel dentin",
-    "salivary flow rate",
-    "osseointegration",
-    "salivary mucin",
-    "epithelial barrier",
-    "mucosal immunity",
-    "innate immunity",
-    "adaptive immunity",
-    "cytokine response",
-    "inflammation",
-    "extracellular matrix",
-    "vascular permeability",
-    "phagocytosis",
-    "tissue remodeling",
-    "gut brain axis",
-    "endothelial dysfunction",
-    "homeostasis",
-    "cell adhesion",
-    "reactive oxygen species",
-    "neutrophil extracellular traps"
+    "microbiome"
 ]
 ```
 
@@ -323,19 +237,14 @@ The tagger enforces a 3-tier hierarchical taxonomy structure:
 
 ---
 
-### Entity Pre-Extraction & Exclusion Rules
+### Organism Tagging & Exclusion Rules
 
 #### Anti-Hallucination & Cloning Tool Exclusion
 The system prompt contains a hard constraint for organism tagging:
 > **Critical Rule**: Only tag organisms (`org:`) or groups (`group:`) that are the **primary subject** or core scientific focus of the paper. Routine laboratory cloning vectors, expression systems, or helper hosts (such as *Escherichia coli*, *Saccharomyces cerevisiae*, or cloning phages) are **excluded** if they are merely utilized as experimental methodology tools.
 
-#### Local Regex Pre-Extraction
-Before invoking the LLM, the local processor runs zero-token regex scanners to extract candidate entities:
-- **Latin Binomials**: Captures capitalized genus followed by specific epithet (e.g., `Porphyromonas gingivalis`).
-- **Genus Designations**: Captures genus notations (e.g., `Streptococcus sp.`, `Treponema spp.`).
-- **Taxonomic Suffixes**: Identifies standard biological suffixes (`-aceae`, `-ales`, `-cocci`, `-bacilli`).
-
-These candidates are passed to the model as pre-extracted hints, improving classification accuracy on specialized or less common organisms.
+#### Pure Contextual Extraction
+Classification is performed directly by the Gemini model using the paper's title and extracted text, ensuring comprehensive semantic evaluation of primary research subjects without artificial regex constraints.
 
 ---
 
@@ -360,7 +269,7 @@ topics = [
 ]
 ```
 
-3. If desired, adjust the system prompt description in [prompt.go](file:///home/andreassag/repo/zotero-tagger/internal/tagging/prompt.go) to match your domain's taxonomy conventions.
+3. If desired, adjust the system prompt description in [`internal/tagging/prompt.go`](../internal/tagging/prompt.go) to match your domain's taxonomy conventions.
 
 ---
 
@@ -372,45 +281,34 @@ topics = [
 
 ---
 
-## 7. Token Reduction & Optimization Engine
+## 7. Multimodal PDF & Document Ingestion
 
-Academic paper PDFs contain significant amounts of repetitive or peripheral text (author affiliations, reference lists, in-text citations, headers, footers). `zotero-tagger` reduces token consumption by **70% to 80%** using rule-based preprocessing:
+`zotero-tagger` uses Gemini's native multimodal capabilities to analyze scientific literature:
 
 ```
 +-------------------------------------------------------------+
-|                  Raw PDF Full-Text (20k+ words)             |
+|              Raw PDF Document (from Zotero API)             |
 +-------------------------------------------------------------+
                               |
                               v
- [ Citation Stripping: (Smith et al., 2020), [1-4], etc. ]
+   [ Upload to Google GenAI Files API (application/pdf) ]
                               |
                               v
- [ Reference List & Bibliography Truncation (End of Paper) ]
+ [ Multimodal Prompt to gemini-3.5-flash-lite with File Part ]
                               |
                               v
- [ IMRAD Section Extraction & Prioritization ]
-   Priority 1: Abstract & Concluding Summary
-   Priority 2: Results & Key Findings
-   Priority 3: First N Introductory Paragraphs
-                              |
-                              v
- [ Token Budget Clamping (max_input_tokens) ]
+   [ Automatic File Deletion from Google Storage on Done ]
                               |
                               v
 +-------------------------------------------------------------+
-|              Optimized Prompt Text (~2k-3k words)           |
+|               Extracted JSON Taxonomy Response              |
 +-------------------------------------------------------------+
 ```
 
-### Inspecting Token Savings
-
-You can evaluate the token reduction engine on your library without sending API calls to the LLM:
-
-```bash
-./zotero-tagger tag --skip-llm --limit 5
-```
-
-Terminal output displays before-and-after word count statistics and percentage savings for each paper processed.
+### Multimodal Benefits
+- **Full Context**: Gemini evaluates figures, tables, text layout, and structural emphasis directly from the PDF without OCR errors or text truncation.
+- **Zero Local Dependencies**: No need to install `poppler-utils` or maintain external PDF CLI utilities.
+- **Automatic Storage Management**: Files uploaded to Google's Files API are immediately deleted upon completion of inference.
 
 ---
 
@@ -440,7 +338,7 @@ Use `--cache` during development or configuration tuning:
 ./zotero-tagger tag --cache --dry-run
 ```
 
-Responses are hashed based on the model name, system prompt, and user prompt (SHA-256) and saved in `.cache/llm/`. Identical requests are resolved instantly from disk at zero token cost.
+Responses are hashed based on the model name, system prompt, and user prompt (SHA-256) and saved in the user's OS cache directory (e.g. `~/.cache/zotero-tagger/llm/` on Linux). Identical requests are resolved instantly from disk at zero token cost.
 
 ---
 
@@ -464,9 +362,10 @@ Executes the synchronization pipeline.
 - `--group <string>`: Process a specific Zotero Group Library ID instead of the default personal library.
 - `--concurrent <int>`: Parallel worker count (default: `1`).
 - `--reprocess`: Process items even if the sentinel tag (`_ai-tagged`) is already present.
-- `--cache`: Enable persistent disk caching for LLM requests.
-- `--skip-llm`: Run extraction, preprocessing, and regex pre-extraction without calling LLM endpoints.
 - `--verbose`: Enable debug-level log output.
+- `--json-log`: Output logs in structured JSON format.
+- `--cache`: Enable persistent disk caching for LLM requests.
+- `--skip-llm`: Run document acquisition and preprocessing without calling LLM endpoints or updating Zotero tags.
 
 ---
 
@@ -474,7 +373,7 @@ Executes the synchronization pipeline.
 
 ### Dockerfile
 
-The multi-stage [Dockerfile](file:///home/andreassag/repo/zotero-tagger/docker/Dockerfile) compiles a static Go binary on Alpine Linux and packages it with `poppler-utils` and `ca-certificates` in an ultra-compact ~25MB image.
+The multi-stage [`Dockerfile`](../docker/Dockerfile) compiles a static Go binary on Alpine Linux and packages it with `ca-certificates` in an ultra-compact ~25MB image.
 
 ### Running with Docker Compose
 
@@ -505,28 +404,21 @@ docker compose -f docker/docker-compose.yml up --build
 
 ## 11. Troubleshooting & FAQ
 
-### 1. `pdftotext: command not found` or PDF extraction failed
-- **Cause**: The `poppler-utils` package is not installed on your system.
-- **Fix**:
-  - Ubuntu/Debian: `sudo apt install -y poppler-utils`
-  - macOS: `brew install poppler`
-  - When running via Docker, `poppler-utils` is installed automatically.
-
-### 2. HTTP 412 Precondition Failed
+### 1. HTTP 412 Precondition Failed
 - **Cause**: An item was modified in Zotero (via desktop client, web app, or another script) between the time `zotero-tagger` fetched it and attempted to update tags.
 - **Behavior**: The tagger catches `412 Precondition Failed` and safely skips updating that item to prevent overwriting concurrent user edits.
 - **Fix**: Re-run the tool; the item will be refreshed with the updated library version on the next sync.
 
-### 3. HTTP 429 Too Many Requests
+### 2. HTTP 429 Too Many Requests
 - **Cause**: Exceeded Zotero API or LLM endpoint request quotas.
 - **Fix**: `zotero-tagger` automatically respects `Retry-After` headers and applies exponential backoff. For persistent limits, lower `requests_per_minute` and `tokens_per_minute` in `config/config.toml`.
 
-### 4. Item has no PDF and no Abstract
+### 3. Item has no PDF and no Abstract
 - **Cause**: A Zotero metadata entry contains neither an attached PDF file nor an abstract text note.
 - **Behavior**: The item cannot be categorized semantically and is safely skipped with a warning log.
 - **Fix**: Add an abstract or attach a PDF to the item in Zotero.
 
-### 5. LLM JSON Parsing Error
+### 4. LLM JSON Parsing Error
 - **Cause**: The model returned non-JSON conversational text or malformed JSON.
 - **Fix**:
   - Ensure `temperature = 0.0` in `config/config.toml`.
